@@ -7,13 +7,31 @@
 #include <math.h>
 
 #define PGSIZE 512
-#define M 4 //Max. entries per node
-#define m 2;  //Min. entries per node
+#define NUMRECTS 12
+#define M 3 //Max. entries per node
+#define m 1;  //Min. entries per node
 int level = 0;  //Begin at root node
 
 typedef int bool;
 #define true 1
 #define false 0
+
+
+/// Get number of leaf nodes
+    int numLeafs(){
+        return ceil(NUMRECTS/M);
+        }
+
+/// Get number of slices
+    int numSlices(){
+        return ceil(sqrt(numLeafs()));
+        }
+
+/// Get number of rects per slice
+    int rectSlices(){
+        return numSlices()*M;
+        }
+
 
 struct Rect{
 int x1;
@@ -71,6 +89,34 @@ void insert(struct Entry newEntry,struct Node *Root){
 
     }
 }
+
+/// Sort values of rect array by ascending x value
+void sortX(struct Rect *arr){
+struct Rect temp;
+
+        for (int i=0;i<NUMRECTS-1;i++){
+            for (int j=i+1;j<NUMRECTS;j++){
+                if (arr[i].x1 > arr[j].x2){
+                    temp = arr[i];
+                    arr[i] = arr[j];
+                    arr[j] = temp;}
+                }
+        }
+    }
+
+void sortY(struct Rect *arr){
+struct Rect temp;
+    for (int k=0;k<numSlices();k++){
+        for (int i=k*rectSlices();i<((k+1)*rectSlices())-1;i++){
+            for (int j=i+1;j<(k+1)*rectSlices();j++){
+                if (arr[i].y1 > arr[j].y1){
+                    temp = arr[i];
+                    arr[i] = arr[j];
+                    arr[j] = temp;}
+                }
+        }
+    }
+    }
 
 #endif
 
