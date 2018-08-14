@@ -61,7 +61,7 @@ gettimeofday(struct timeval *tv, struct timezone *tz)
 #include <unistd.h>
 #endif
 
-#include <db.h>
+#include "db.h"
 
 int	init __P((const char *, u_int32_t, int, const char *));
 int	run __P((int, long long, u_int32_t, int, const char *));
