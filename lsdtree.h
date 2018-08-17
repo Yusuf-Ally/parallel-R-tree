@@ -23,6 +23,10 @@ int lsd_range_count(struct lsdtree *tree, num_t * searchrange);
 
 int lsd_cts_range_count(struct lsdtree *tree, num_t * searchrect);
 
+int lsd_par_cts_range_count(struct lsdtree *tree, num_t * searchrect);
+
+int lsd_par_range_count(struct lsdtree *tree, num_t * searchrange);
+
 void lsd_sort(num_t **values, int dim, int size);
 
 void lsd_print(struct lsdtree * tree);
