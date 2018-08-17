@@ -1,19 +1,31 @@
+/* Created by Dylan Jacobsen */
+
 #ifndef _LSDTREE_H_
 #define _LSDTREE_H_
 
-struct lsdtree;
-
 typedef double num_t;
 
-struct lsdtree * lsd_create(int dim, int bucketsize, const char * filename);
+struct lsdtree;
 
-struct lsdtree * lsd_open(char * filename);
+struct lsdtree * lsd_create(num_t **values,   int dim, int size);
 
-void lsd_flush(struct lsdtree * tree);
-
-void lsd_free(struct lsdtree * tree);
+struct lsdtree * lsd_create_empty(int dim);
 
 void lsd_insert(struct lsdtree * tree, num_t * value);
 
+void lsd_free (struct lsdtree *tree);
 
-#endif
+// search range for 2 dimensional has to be in the format (xl,xh,yl,yh).
+// for 3 dimension (xl,xh,yl,yh,zl,zh) etc for higher dimensions.
+void lsd_range (struct lsdtree *tree, num_t * searchrange, num_t **result, int *resultsize);
+
+int lsd_range_count(struct lsdtree *tree, num_t * searchrange);
+
+int lsd_cts_range_count(struct lsdtree *tree, num_t * searchrect);
+
+void lsd_sort(num_t **values, int dim, int size);
+
+void lsd_print(struct lsdtree * tree);
+
+
+#endif	/* _LDSTREE_H_ */

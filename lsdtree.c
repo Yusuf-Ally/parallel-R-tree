@@ -2,328 +2,135 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <omp.h>
 #include "lsdtree.h"
+#include "queue.h"
 
-#define LSD_VERSION 1
+#define LSD_BUCKET_SIZE 100
 
-#define LSD_TREE_PAGE_HEIGHT 5
-#define LSD_TREE_HEADER_SIZE 1024
-#define LSD_TREE_NODE_SIZE 64
+#define LSD_NODE_BUFFER_DEPTH 10
 
 struct lsdnode
 {
-    // The dimension to split across
 	int splitdim;
 
-	// the position to split across
 	num_t splitpos;
 
-	// The left and right sub-nodes
 	struct lsdnode *left, *right;
 
-    // If the node is at the end of a tree page define the page number of the new page
-	long pagenumber;
+	num_t **bucket;
 
-	// the index of the bucket in the bucket page.
-	long bucketindex;
-
-    // the size of a bucket
 	int bucketsize;
-};
-
-struct lsdpage
-{
-    struct lsdnode * root;
-    long pagenumber;
 };
 
 struct lsdtree
 {
-    struct lsdpage * rootpage;
+	struct lsdnode *root;
 
 	int numofdim;
 
 	int bucketsize;
 
-    long numofpages;
-
-    long numofbucketpages;
-
-    int pageheight;
-    // The size of the header in bytes
-    int headersize;
-    // the size of each page in bytes
-    int pagesize;
-    // the size of each node in bytes
-    int nodesize;
-
-    int version;
-
-	char * filename;
-
-	FILE * file;
-
-	FILE * bfile;
-
 };
 
-struct lsdpage * lsd_get_treepage(struct lsdtree * tree, long pagenumber);
+void lsd_create_subnodes(struct lsdnode * node, num_t **values, int dim,  int size, int bucketsize);
+void lsd_sort(num_t **values, int dim, int size);
+void lsd_free_node(struct lsdnode *node);
 
-struct lsdnode * lsd_node_create()
+
+struct lsdtree * lsd_create(num_t **values,   int dim, int size)
 {
-    struct lsdnode * node;
-    node = malloc(sizeof *node);
-    node->splitdim = 0;
-    node->splitpos = 0.0;
-    node->bucketindex = -1;
-    node->bucketsize = 0;
-    node->left = NULL;
-    node->right = NULL;
-    node->pagenumber = -1;
-};
+	struct lsdtree *tree;
 
-struct lsdpage * lsd_page_create()
+	tree = malloc(sizeof *tree);
+	tree->numofdim = dim;
+	tree->root = malloc(sizeof *(tree->root));
+
+	tree->root->splitdim = 0;
+
+	int bucketsize = LSD_BUCKET_SIZE;
+	tree->bucketsize = bucketsize;
+
+	lsd_create_subnodes(tree->root, values,  dim,size, bucketsize);
+
+	return tree;
+}
+
+struct lsdtree * lsd_create_empty(int dim)
 {
-    struct lsdpage * page;
-    page = malloc(sizeof *page);
+	struct lsdtree *tree;
 
-    page->pagenumber = -1;
+	tree = malloc(sizeof *tree);
+	tree->numofdim = dim;
 
-    //page->root = lsd_node_create();
+	int bucketsize = LSD_BUCKET_SIZE;
+	tree->bucketsize = bucketsize;
 
+	tree->root = malloc(sizeof *(tree->root));
+	tree->root->splitdim = 0;
+	tree->root->bucket = malloc(bucketsize * sizeof(num_t*));
+	tree->root->bucketsize = 0;
+	tree->root->left = NULL;
+	tree->root->right = NULL;
+
+	return tree;
 };
 
 
-int lsd_get_page_size(int pageheight)
+void lsd_create_subnodes(struct lsdnode * node, num_t **values, int dim,  int size, int bucketsize)
 {
-    int res = 0;
-    for (int i = 0; i < pageheight; i++)
-        res += 1 << i;
+	if (size <= bucketsize)
+	{
+        num_t ** bucket = malloc(bucketsize * sizeof(num_t*));
+
+        for (int i = 0; i < size; i++) bucket[i] = values[i];
+
+        node->bucket = bucket;
+		node->bucketsize = size;
+		node->left = NULL;
+		node->right = NULL;
+		return;
+	}
+
+	// Get the dimesnion to split across
+	int splitdim = node->splitdim;
+
+	// Calculate Average across the split dimension
+	num_t average = 0;
+	for (int i = 0; i < size; i++)
+	{
+        num_t * val = values[i];
+		average += val[splitdim];
+	}
+	average /= size;
+	node->splitpos = average;
+
+	// Sort the data across the specific dimension
+	lsd_sort(values,splitdim,size);
+
+	// find the datapoint to be split by
+	int splitvpos = 0;
+	for (int i = 0; i < size; i++)
+	{
+	    num_t *val = values[i];
+		if (val[splitdim] > average)
+		{
+			splitvpos = i-1;
+			break;
+		}
+	}
+
+	node->left = malloc(sizeof *(node->left));
+	node->right = malloc(sizeof *(node->right));
+
+	int newdim = (splitdim == dim-1)? 0 : splitdim+1;
+
+	node->left->splitdim = newdim;
+	node->right->splitdim = newdim;
+
+	lsd_create_subnodes(node->left, values, dim, splitvpos + 1, bucketsize);
+	lsd_create_subnodes(node->right, values + splitvpos + 1, dim, size - splitvpos - 1, bucketsize);
 
-    return res * LSD_TREE_NODE_SIZE;
-}
-
-int lsd_get_numofdims(struct lsdtree * tree)
-{
-    return tree->numofdim;
-}
-
-struct lsdtree * lsd_create(int dim, int bucketsize, const char * filename)
-{
-    struct lsdtree * tree;
-
-    tree = malloc(sizeof *tree);
-
-    tree->headersize = LSD_TREE_HEADER_SIZE;
-
-    tree->numofdim = dim;
-
-    tree->bucketsize = bucketsize;
-
-    tree->filename = malloc(strlen(filename) + 1);
-    strcpy(tree->filename, filename);
-
-    tree->file = fopen(filename, "wb+");
-
-    tree->numofpages = 1;
-
-    tree->pageheight = LSD_TREE_PAGE_HEIGHT;
-
-    tree->pagesize = lsd_get_page_size(LSD_TREE_PAGE_HEIGHT);
-
-    tree->nodesize = LSD_TREE_NODE_SIZE;
-
-    tree->version = LSD_VERSION;
-
-    tree->rootpage = lsd_page_create();
-    tree->rootpage->pagenumber = 0;
-    tree->rootpage->root = lsd_node_create();
-    tree->rootpage->root->bucketindex = 0;
-
-    tree->numofbucketpages = 0;
-
-    lsd_flush(tree);
-
-
-    char bucketfile[strlen(tree->filename) + 10];
-    strcpy(bucketfile, tree->filename);
-    strcat(bucketfile, ".pgs");
-
-    tree->bfile = fopen(bucketfile, "wb+");
-
-    lsd_new_bucketpage(tree,NULL,0);
-
-    return tree;
-};
-
-struct lsdtree * lsd_open(char * filename)
-{
-    FILE * f;
-
-    f = fopen(filename,"rb+");
-
-    fseek(f,0,SEEK_SET);
-
-    struct lsdtree * tree;
-    tree = malloc(sizeof *tree);
-
-    tree->filename = malloc(strlen(filename) + 1);
-    strcpy(tree->filename, filename);
-
-    tree->file = f;
-
-    int headersize = 0;
-    int wpos = 0;
-
-    wpos += sizeof(int);
-
-    fread(&headersize, sizeof(int), 1, f);
-    tree->headersize = headersize;
-
-    fseek(f,0,SEEK_SET);
-
-    char wdata[headersize];
-    memset(wdata,0,headersize);
-
-    fread(wdata, 1, headersize, f);
-
-    int version = *(int *)(wdata+wpos);
-    tree->version = version;
-    wpos += sizeof(tree->version);
-
-    if (tree->version != LSD_VERSION)
-        return NULL;
-
-    int numofdim = *(int *)(wdata+wpos);
-    tree->numofdim = numofdim;
-    wpos += sizeof (tree->numofdim);
-
-    tree->bucketsize = *(int *)(wdata+wpos);
-    wpos += sizeof (tree->bucketsize);
-
-    tree->numofpages = *(long *)(wdata+wpos);
-    wpos += sizeof(tree->numofpages);
-
-    tree->numofbucketpages = *(long *)(wdata+wpos);
-    wpos += sizeof(tree->numofbucketpages);
-
-    tree->pageheight = *(int *)(wdata+wpos);
-    wpos += sizeof(tree->pageheight);
-
-    tree->pagesize = *(int *)(wdata+wpos);
-    wpos += sizeof(tree->pagesize);
-
-    tree->nodesize = *(int *)(wdata+wpos);
-    wpos += sizeof(tree->nodesize);
-
-    tree->rootpage = lsd_get_treepage(tree,0);
-
-    char bucketfile[strlen(tree->filename) + 10];
-    strcpy(bucketfile, tree->filename);
-    strcat(bucketfile, ".pgs");
-
-    tree->bfile = fopen(bucketfile, "rb+");
-
-
-    return tree;
-};
-
-void lsd_flush(struct lsdtree * tree)
-{
-    FILE * f = tree->file;
-
-    fseek(f, 0, SEEK_SET);
-
-    // WRITE HEADER
-    int headersize = tree->headersize;
-    int wpos = 0;
-    char wdata[headersize];
-    memset(wdata,0,headersize);
-
-    *(int *)(wdata+wpos) = headersize;
-    wpos += sizeof(int);
-
-    *(int *)(wdata+wpos) = tree->version;
-    wpos += sizeof(int);
-
-    *(int *)(wdata+wpos) = tree->numofdim;
-    wpos += sizeof(tree->numofdim);
-
-    *(int *)(wdata+wpos) = tree->bucketsize;
-    wpos += sizeof(tree->bucketsize);
-
-    *(long *)(wdata+wpos) = tree->numofpages;
-    wpos += sizeof(tree->numofpages);
-
-    *(long *)(wdata+wpos) = tree->numofbucketpages;
-    wpos += sizeof(tree->numofbucketpages);
-
-    *(int *)(wdata+wpos) = tree->pageheight;
-    wpos += sizeof(tree->pageheight);
-
-    *(int *)(wdata+wpos) = tree->pagesize;
-    wpos += sizeof(tree->pagesize);
-
-    *(int *)(wdata+wpos) = tree->nodesize;
-    wpos += sizeof(tree->nodesize);
-
-    fwrite(wdata, 1, headersize, f);;
-    fflush(f);
-
-
-    lsd_put_treepage(tree, tree->rootpage);
-}
-
-
-
-void lsd_free_node(struct lsdnode *node)
-{
-    if (node == NULL)
-        return;
-
-    if (node->left != NULL)
-    {
-        lsd_free_node(node->left);
-        lsd_free_node(node->right);
-    }
-
-    free(node);
-}
-
-void lsd_free_page(struct lsdpage *page)
-{
-    if (page == NULL)
-        return;
-
-    lsd_free_node(page->root);
-
-    free(page);
-}
-
-void lsd_free(struct lsdtree * tree)
-{
-    if (tree == NULL)
-        return;
-
-    lsd_flush(tree);
-
-    lsd_free_page(tree->rootpage);
-
-    fclose(tree->file);
-
-    fclose(tree->bfile);
-
-    free(tree->filename);
-
-    free(tree);
-}
-
-void lsd_free_bucket(struct lsdtree *tree, num_t ** bucket)
-{
-    for (int i = 0; i < tree->bucketsize; i++)
-    {
-        free(bucket[i]);
-    }
 }
 
 int lsd_sort_partition(num_t **values, int dim, int size)
@@ -362,426 +169,380 @@ void lsd_sort(num_t **values, int dim, int size)
 	}
 }
 
-void lsd_create_subnodes(struct lsdtree * tree, struct lsdnode * node, num_t **values,int splitdim, int size)
+void lsd_print(struct lsdtree * tree)
 {
-	// Calculate Average across the split dimension
-	num_t average = 0;
-	for (int i = 0; i < size; i++)
-	{
-        num_t * val = values[i];
-		average += val[splitdim];
-	}
-	average /= size;
-	node->splitpos = average;
+    struct lsdnode *root = tree->root;
 
-	// Sort the data across the specific dimension
-	lsd_sort(values,splitdim,size);
-
-	// find the datapoint to be split by
-	int splitvpos = 0;
-	for (int i = 0; i < size; i++)
-	{
-		if (values[i][splitdim] > average)
-		{
-			splitvpos = i-1;
-			break;
-		}
-	}
-
-	//printf("NSplit %f\n", average);
-
-	node->left = lsd_node_create();
-	node->right = lsd_node_create();
-
-    node->left->bucketindex = node->bucketindex;
-    node->right->bucketindex = tree->numofbucketpages;
-
-    node->left->bucketsize = splitvpos + 1;
-    node->right->bucketsize = size - splitvpos - 1;
-
-    node->bucketindex = -1;
-    node->bucketsize = 0;
-    node->splitdim = splitdim;
-
-    lsd_put_bucketpage(tree,node->left->bucketindex,values,node->left->bucketsize);
-    lsd_new_bucketpage(tree, &values[splitvpos+1], node->right->bucketsize);
-}
-
-void lsd_get_bucketpage(struct lsdtree * tree, int bucketindex, num_t ** bucket)
-{
-    FILE * f = tree->bfile;
-
-    int nbucketsize = tree->bucketsize * tree->numofdim;
-    int pagesize = ( sizeof(num_t) * nbucketsize);
-    int ppos = bucketindex * pagesize;
-
-    fseek(f,ppos, SEEK_SET);
-
-    num_t cpage[nbucketsize];
-    memset(cpage,0,pagesize);
-
-    fread(cpage,1,pagesize,f);
-
-    for (int i = 0; i < tree->bucketsize; i++)
+    while (root->left != NULL)
     {
-        num_t * val = malloc(sizeof(num_t) * tree->numofdim);
-        for (int j = 0; j < tree->numofdim; j++)
-            val[j] = cpage[i*(tree->numofdim) + j];
+        printf("%d %f\n", root->splitdim, root->splitpos);
 
-        bucket[i] = val;
-    }
-}
-
-void lsd_put_bucketpage(struct lsdtree * tree, int bucketindex, num_t ** bucket, int bucketsize)
-{
-    FILE * f = tree->bfile;
-
-    int nbucketsize = tree->bucketsize * tree->numofdim;
-    int pagesize = ( sizeof(num_t) * nbucketsize);
-
-    int ppos;
-    if (bucketindex > -1)
-        ppos = bucketindex * pagesize;
-    else
-    {
-        ppos = tree->numofbucketpages * pagesize;
-        (tree->numofbucketpages)++;
+        root = root->left;
     }
 
-    fseek(f,ppos, SEEK_SET);
-
-    num_t cpage[nbucketsize];
-    memset(cpage, 0, pagesize);
-
-
-    for (int i = 0; i < bucketsize; i++)
-    {
-        int ipos = i * tree->numofdim;
-        for (int j = 0; j < tree->numofdim; j++)
-            cpage[ipos + j] = bucket[i][j];
-    }
-
-    fwrite(cpage, 1, pagesize, f);
-    fflush(f);
 }
-
-void lsd_new_bucketpage(struct lsdtree * tree, num_t ** bucket, int bucketsize)
-{
-    lsd_put_bucketpage(tree,-1,bucket,bucketsize);
-}
-
-
 
 void lsd_insert(struct lsdtree * tree, num_t * value)
 {
-    struct lsdpage * page;
-    struct lsdnode * parent, * node;
-    int height = 1;
+    struct lsdnode * node = tree->root;
 
     int maxbucketsize = tree->bucketsize;
 
-    page = tree->rootpage;
-    node = page->root;
-
     while (node->left != NULL)
     {
-        parent = node;
-
         int splitdim = node->splitdim;
-
         num_t val = value[splitdim];
-
         if (val <= node->splitpos)
             node = node->left;
         else
             node = node->right;
-
-        height++;
-
-        if (node->pagenumber >= 0)
-        {
-            long pagenumber = node->pagenumber;
-
-            if (page->pagenumber > 0)
-                lsd_free_page(page);
-
-            page = lsd_get_treepage(tree, pagenumber);
-            node = page->root;
-
-            height = 1;
-        }
     }
 
-    num_t ** bucket = malloc(sizeof(num_t *) * (tree->bucketsize + 1));
-    lsd_get_bucketpage(tree,node->bucketindex, bucket);
-
-    int bcksize = node->bucketsize;
-
-    if (bcksize < tree->bucketsize)
+    if (node->bucketsize == maxbucketsize)
     {
-        for(int i = 0; i < tree->numofdim;i++)
-        {
-            num_t val = value[i];
-            bucket[bcksize][i] = val;
-        }
+        num_t * values[maxbucketsize + 1];
+        for (int i = 0; i < maxbucketsize; i++)
+            values[i] = node->bucket[i];
+        values[maxbucketsize] = value;
 
+        free(node->bucket);
+
+        lsd_create_subnodes(node,values,tree->numofdim,maxbucketsize + 1,maxbucketsize);
+    }
+    else
+    {
+        node->bucket[node->bucketsize] = value;
         (node->bucketsize)++;
+    }
 
-        lsd_put_bucketpage(tree,node->bucketindex, bucket, node->bucketsize);
 
-        lsd_put_treepage(tree, page);
+}
 
+void lsd_free_node(struct lsdnode *node)
+{
+    if (node->left != NULL)
+    {
+        lsd_free_node(node->left);
+        lsd_free_node(node->right);
     }
     else
     {
-        //printf("New Node\n");
-        int splitdim;
+        free(node->bucket);
+    }
 
-        if (parent == NULL)
-            splitdim = 0;
-        else
-            splitdim = (parent->splitdim + 1 < tree->numofdim) ? parent->splitdim + 1: 0;
+    free(node);
+}
 
-        bucket[tree->bucketsize] = value;
+void lsd_free(struct lsdtree *tree)
+{
+    lsd_free_node(tree->root);
 
-        lsd_create_subnodes(tree,node,bucket, splitdim, tree->bucketsize + 1);
+    free(tree);
+}
 
-        if (height >= tree->pageheight)
+int lsd_is_point_contained(num_t * point, num_t * searchrange, int dim)
+{
+    for (int i = 0; i < dim; i++)
+    {
+        num_t low = searchrange[i*2];
+        num_t high = searchrange[i*2+1];
+
+        if (point[i] < low || point[i] > high)
+            return 0;
+    }
+
+    return 1;
+}
+
+int lsd_range_node_count(struct lsdnode *node, num_t * searchrange, int dim)
+{
+    int ret = 0;
+
+    if (node->left == NULL)
+    {
+        for (int i = 0; i < node->bucketsize; i++)
         {
-            struct lsdpage * rpage = lsd_page_create();
-            rpage->root = node;
+            if (lsd_is_point_contained(node->bucket[i], searchrange,dim))
+                ret++;
+        }
+        return ret;
+    }
 
-            struct lsdnode * rnode = lsd_node_create();
-            rnode->pagenumber = tree->numofpages;
+    int sdim = node->splitdim;
+    num_t spos = node->splitpos;
 
-            if (node == parent->left)
-                parent->left = rnode;
-            else
-                parent->right = rnode;
+    num_t xlow = searchrange[sdim*2];
+    num_t xhigh = searchrange[sdim*2+1];
 
-            lsd_new_treepage(tree, rpage);
+    if(xlow < spos)
+    {
+        ret += lsd_range_node_count(node->left,searchrange, dim);
+    }
+    if (xhigh > spos)
+    {
+        ret += lsd_range_node_count(node->right, searchrange, dim);
+    }
+
+    return ret;
+}
+
+int lsd_range_count(struct lsdtree *tree, num_t * searchrange)
+{
+    return lsd_range_node_count(tree->root, searchrange, tree->numofdim);
+}
+
+int lsd_is_rect_intersecting(num_t * rect, num_t * searchrect, int dim)
+{
+    for (int i = 0; i < dim; i++)
+    {
+        int p = 2*i;
+        num_t amin = rect[p];
+        num_t amax = rect[p + 1];
+
+        num_t bmin = searchrect[p];
+        num_t bmax = searchrect[p + 1];
+
+        if(amax < bmin || amin > bmax)
+            return 0;
+    }
+
+    return 1;
+}
+
+int lsd_cts_range_node_count(struct lsdnode *node, num_t * searchrect, int dim)
+{
+    int ret = 0;
+
+    if (node->left == NULL)
+    {
+        for (int i = 0; i < node->bucketsize; i++)
+        {
+            if (lsd_is_rect_intersecting(node->bucket[i], searchrect,dim))
+                ret++;
+        }
+        return ret;
+    }
+
+    int sdim = node->splitdim;
+    num_t spos = node->splitpos;
+
+    int sndim = sdim / 2;
+
+    num_t xlow = searchrect[sndim*2];
+    num_t xhigh = searchrect[sndim*2+1];
+
+    if (sdim % 2 == 0)
+    {
+        ret += lsd_cts_range_node_count(node->left,searchrect,dim);
+        if (spos <= xhigh)
+            ret += lsd_cts_range_node_count(node->right,searchrect,dim);
+    }
+    else
+    {
+        ret += lsd_cts_range_node_count(node->right,searchrect,dim);
+        if (spos >= xlow)
+            ret += lsd_cts_range_node_count(node->left,searchrect,dim);
+
+    }
+
+    return ret;
+}
+
+int lsd_cts_range_count(struct lsdtree *tree, num_t * searchrect)
+{
+    return lsd_cts_range_node_count(tree->root,searchrect,tree->numofdim / 2);
+}
+
+
+int lsd_par_range_node_count(num_t * searchrange, int dim, queue * q, long * tcount, long * ncount)
+{
+    int my_rank = omp_get_thread_num();
+    int thread_count = omp_get_num_threads();
+
+    struct lsdnode * node;
+
+    #pragma omp critical
+    node = queue_pop(q);
+
+    if (node == NULL)
+    {
+        #pragma omp atomic
+        (*tcount)++;
+
+    }
+
+    while (*tcount < thread_count)
+    {
+        if (node != NULL)
+        {
+            while (node->left != NULL)
+            {
+                int sdim = node->splitdim;
+                num_t spos = node->splitpos;
+
+                num_t xlow = searchrange[sdim*2];
+                num_t xhigh = searchrange[sdim*2+1];
+
+                int goneleft = 0;
+                struct lsdnode * nnode = NULL;
+
+                if(xlow < spos)
+                {
+                    nnode = node->left;
+                    goneleft = 1;
+                }
+
+                if (xhigh > spos)
+                {
+                    if (goneleft)
+                    {
+                        #pragma omp critical
+                        queue_push(q,node->right);
+                    }
+                    else
+                        nnode = node->right;
+                }
+
+                node = nnode;
+            }
+
+            int ret = 0;
+            for (int i = 0; i < node->bucketsize; i++)
+            {
+                if (lsd_is_point_contained(node->bucket[i], searchrange,dim))
+                    ret++;
+            }
+
+            #pragma omp atomic
+            *ncount += ret;
+
         }
 
-        lsd_put_treepage(tree, page);
+        struct lsdnode * nextnode;
+
+        #pragma omp critical
+        nextnode = queue_pop(q);
+
+        if (nextnode == NULL && node != NULL)
+        {
+            #pragma omp atomic
+            (*tcount)++;
+        }
+        if (nextnode != NULL && node == NULL)
+        {
+            #pragma omp atomic
+            (*tcount)--;
+        }
+
+        node = nextnode;
     }
-
-
-    if (page->pagenumber > 0)
-        lsd_free_page(page);
-
-    lsd_free_bucket(tree,bucket);
-    free(bucket);
 }
 
-// fint the node in a list of nodes
-int lsd_get_node_position(struct lsdnode * node, struct lsdnode ** nodes, int nodesnums)
+int lsd_par_range_count(struct lsdtree *tree, num_t * searchrange)
 {
-    for (int i = 0; i < nodesnums; i++)
+    queue * q = queue_create();
+    queue_push(q, tree->root);
+    long tcount = 0;
+    long ncount = 0;
+
+    #pragma omp parallel num_threads(4)
+    lsd_par_range_node_count(searchrange, tree->numofdim, q, &tcount, &ncount);
+
+    return ncount;
+}
+int lsd_par_cts_range_node_count(num_t * searchrect, int dim, queue * q, long * tcount, long * ncount)
+{
+    int my_rank = omp_get_thread_num();
+    int thread_count = omp_get_num_threads();
+
+    struct lsdnode * node;
+
+    #pragma omp critical
+    node = queue_pop(q);
+
+    if (node == NULL)
     {
-        if (nodes[i] == node)
-            return i;
+        #pragma omp atomic
+        (*tcount)++;
+
     }
-    return -1;
-}
 
-void lsd_write_node(char * buffer, struct lsdnode * node, struct lsdnode ** nodes, int nodesnums)
-{
-    int wpos = 0;
-
-    num_t t = node->splitdim;
-
-    *(int *)(buffer+wpos) = node->splitdim;
-    wpos += sizeof(int);
-
-    *(num_t *)(buffer+wpos) = node->splitpos;
-    wpos += sizeof(num_t);
-
-    *(int *)(buffer+wpos) = lsd_get_node_position(node->left, nodes, nodesnums);
-    wpos += sizeof(int);
-
-    *(int *)(buffer+wpos) = lsd_get_node_position(node->right, nodes, nodesnums);
-    wpos += sizeof(int);
-
-    *(long *)(buffer+wpos) = node->pagenumber;
-    wpos += sizeof(long);
-
-    *(long *)(buffer+wpos) = node->bucketindex;
-    wpos += sizeof(long);
-
-    *(int *)(buffer+wpos) = node->bucketsize;
-    wpos += sizeof(int);
-}
-
-void lsd_read_node(char * buffer, struct lsdnode * node, struct lsdnode ** nodes)
-{
-    int wpos = 0;
-
-    node->splitdim = *(int *)(buffer + wpos);
-    wpos += sizeof (int);
-
-    node->splitpos = *(num_t *)(buffer + wpos);
-    wpos += sizeof (num_t);
-
-    int lpos = *(int *)(buffer + wpos);
-    node->left = (lpos == -1)? NULL : nodes[lpos];
-    wpos += sizeof (int);
-
-    int rpos = *(int *)(buffer + wpos);
-    node->right = (rpos == -1)? NULL : nodes[rpos];
-    wpos += sizeof (int);
-
-    node->pagenumber = *(long *)(buffer + wpos);
-    wpos += sizeof (long);
-
-    node->bucketindex = *(long *)(buffer + wpos);
-    wpos += sizeof (long);
-
-    node->bucketsize = *(int *)(buffer + wpos);
-    wpos += sizeof (int);
-}
-
-
-struct lsdpage * lsd_get_treepage(struct lsdtree * tree, long pagenumber)
-{
-    FILE * f = tree->file;
-
-    long wpos = 0;
-
-    int pagesize = tree->pagesize;
-
-    wpos += tree->headersize + pagenumber * (pagesize);
-
-    fseek(f,wpos,SEEK_SET);
-
-    char * wpage = malloc(sizeof(char) * pagesize);
-
-    fread(wpage,1,pagesize,f);
-
-    int npos = 0;
-
-    char c = wpage[0];
-
-    int numofnodes = *(int*)wpage;
-    npos += sizeof(int);
-
-    struct lsdnode ** nodes;
-    nodes = malloc(sizeof (struct lsdnode *) * numofnodes);
-
-    for (int i = 0; i < numofnodes; i++)
-        nodes[i] = lsd_node_create();
-
-    for (int i = 0; i < numofnodes; i++)
+    while (*tcount < thread_count)
     {
-        lsd_read_node(wpage + npos,nodes[i], nodes);
+        if (node != NULL)
+        {
+            while (node->left != NULL)
+            {
+                int sdim = node->splitdim;
+                num_t spos = node->splitpos;
 
-        npos += tree->nodesize;
+                int sndim = sdim / 2;
+
+                num_t xlow = searchrect[sndim*2];
+                num_t xhigh = searchrect[sndim*2+1];
+
+                struct lsdnode * nnode = NULL;
+
+                if (sdim % 2 == 0)
+                {
+                    nnode = node->left;
+                    if (spos <= xhigh)
+                        queue_push(q, node->right);
+                }
+                else
+                {
+                    nnode = node->right;
+                    if (spos >= xlow)
+                        queue_push(q, node->left);
+
+                }
+
+                node = nnode;
+            }
+
+            int ret = 0;
+            for (int i = 0; i < node->bucketsize; i++)
+            {
+                if (lsd_is_point_contained(node->bucket[i], searchrect,dim))
+                    ret++;
+            }
+
+            #pragma omp atomic
+            *ncount += ret;
+
+        }
+
+        struct lsdnode * nextnode;
+
+        #pragma omp critical
+        nextnode = queue_pop(q);
+
+        if (nextnode == NULL && node != NULL)
+        {
+            #pragma omp atomic
+            (*tcount)++;
+        }
+        if (nextnode != NULL && node == NULL)
+        {
+            #pragma omp atomic
+            (*tcount)--;
+        }
+
+        node = nextnode;
     }
-
-    struct lsdpage * page = malloc(sizeof *page);
-    page->root = nodes[0];
-    page->pagenumber = pagenumber;
-
-    free(nodes);
-    free(wpage);
-
-    return page;
-};
-
-// Counts the number of nodes up to a certain depth
-int lsd_count_nodes(struct lsdnode * node, int depth)
-{
-    if (node->left == NULL || node->pagenumber > 0 || depth == 0)
-        return 1;
-
-    return lsd_count_nodes(node->left, depth - 1) + lsd_count_nodes(node->right, depth - 1) + 1;
 }
 
-// get a list of all nodes and subnodes up to a specific depth
-void lsd_node_list(struct lsdnode * node, int depth, struct lsdnode ** result_list, int * numberofnodes)
+int lsd_par_cts_range_count(struct lsdtree *tree, num_t * searchrect)
 {
-    int nn = *numberofnodes;
-    result_list[nn] = node;
-    (*numberofnodes) += 1;
+    queue * q = queue_create();
+    queue_push(q, tree->root);
+    long tcount = 0;
+    long ncount = 0;
 
-    if (node->left == NULL || node->pagenumber > 0 || depth == 0)
-        return;
+    #pragma omp parallel num_threads(4)
+    lsd_par_cts_range_node_count(searchrect, tree->numofdim, q, &tcount, &ncount);
 
-    lsd_node_list(node->left, depth - 1, result_list, numberofnodes);
-    lsd_node_list(node->right, depth - 1, result_list, numberofnodes);
-};
-
-void lsd_put_treepage(struct lsdtree * tree, struct lsdpage * page)
-{
-    int inodes = lsd_count_nodes(page->root,tree->pageheight);
-
-    char * wpage = malloc(tree->pagesize);
-    memset(wpage,0,tree->pagesize);
-
-    int pageindex = 0;
-
-    struct lsdnode ** nodes;
-    nodes = malloc((sizeof(struct lsdnode *)) * inodes);
-
-    // Get the list of nodes to write
-    int numofnodes = 0;
-    lsd_node_list(page->root, tree->pageheight, nodes, &numofnodes);
-
-    // write the number of nodes to the buffer
-    *(int *)wpage = inodes;
-    memcpy(wpage,&inodes, sizeof(int));
-    pageindex += sizeof (int);
-
-    for (int i = 0; i <inodes;i++)
-    {
-        char nodebuffer[tree->nodesize];
-        memset(nodebuffer,0,tree->nodesize);
-
-        struct lsdnode * nd = nodes[i];
-
-        lsd_write_node(nodebuffer, nodes[i], nodes, inodes);
-
-        memcpy((wpage + pageindex), nodebuffer, tree->nodesize);
-
-        pageindex += tree->nodesize;
-    }
-
-    FILE * f = tree->file;
-
-    if (page->pagenumber >= 0)
-    {
-        int pageposition = tree->headersize + page->pagenumber * tree->pagesize;
-
-        fseek(f, pageposition, SEEK_SET);
-        fwrite(wpage, 1, tree->pagesize, f);
-        fflush(f);
-    }
-    else
-    {
-        int pageposition = tree->headersize + tree->numofpages * tree->pagesize;
-
-        fseek(f, pageposition, SEEK_SET);
-        fwrite(wpage, 1,tree->pagesize, f);
-        fflush(f);
-
-
-        fseek(f,pageposition,SEEK_SET);
-        char rpage[tree->pagesize];
-        fread(rpage,1,tree->pagesize,f);
-        char cp = rpage[0];
-
-        page->pagenumber = tree->numofpages;
-
-        tree->numofpages++;
-    }
-
-    free(nodes);
-    free(wpage);
-}
-
-void lsd_new_treepage(struct lsdtree * tree, struct lsdpage * page)
-{
-    page->pagenumber = -1;
-    lsd_put_treepage(tree, page);
+    return ncount;
 }
 
 
