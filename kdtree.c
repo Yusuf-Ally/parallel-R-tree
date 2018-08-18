@@ -5,6 +5,8 @@
 #include "kdtree.h"
 #include "queue.h"
 
+#define KDHEADERSIZE 128
+
 struct kdnode
 {
     knum_t * point;
@@ -17,6 +19,10 @@ struct kdtree
     struct kdnode * root;
 
     int numofdim;
+
+    int fheadersize;
+
+    int fnodesize;
 
 };
 
@@ -46,6 +52,10 @@ struct kdtree * kd_create(knum_t ** values, int dim, int size)
     tree = malloc(sizeof *tree);
 
     tree->numofdim = dim;
+
+    tree->fheadersize = KDHEADERSIZE;
+
+    tree->fnodesize = 24 + tree->numofdim * sizeof (knum_t);
 
     tree->root = kd_create_subnodes(values,dim,size,0);
 }
@@ -166,6 +176,119 @@ void kd_free(struct kdtree * tree)
 {
     kd_free_node(tree->root);
 }
+
+int kd_nodes_count(struct kdnode * node)
+{
+    if (node == NULL)
+        return 0;
+
+    return 1 + kd_nodes_count(node->left) + kd_nodes_count(node->right);
+}
+
+
+void kd_node_make_array(struct kdnode * node, struct kdnode ** nodes, long * nodecount)
+{
+    if (node == NULL)
+        return;
+
+    nodes[*nodecount] = node;
+
+    (*nodecount)++;
+
+    kd_node_make_array(node->left,nodes,nodecount);
+    kd_node_make_array(node->right,nodes,nodecount);
+}
+
+long kd_get_node_position(struct kdnode * node, struct kdnode ** nodes, long size)
+{
+    for (int i = 0; i < size; i++)
+    {
+        if (nodes[i] == node)
+            return i;
+    }
+    return -1;
+}
+
+void kd_write_node(char * buffer, struct kdnode * node, struct kdnode ** nodes, long size, long dim)
+{
+    int wpos = 0;
+
+    *(long *)(buffer + wpos) = kd_get_node_position(node->left,nodes,size);
+    wpos += sizeof(long);
+
+    *(long *)(buffer + wpos) = kd_get_node_position(node->right,nodes,size);
+    wpos += sizeof(long);
+
+    for (int i = 0; i < dim; i++)
+    {
+        *(knum_t *)(buffer + wpos) = node->point[i];
+        wpos += sizeof(knum_t);
+    }
+}
+
+void kd_save(struct kdtree * tree, const char * filename)
+{
+    int icount = kd_nodes_count(tree->root);
+
+    struct kdnode ** nodes;
+    nodes = malloc(sizeof (struct kdnode *) * icount);
+
+    int nodecount = 0;
+    kd_node_make_array(tree->root,nodes,&nodecount);
+
+    int nodesize = tree->fnodesize;
+
+    int wpos = 0;
+    char * header = malloc(tree->fheadersize);
+
+    *(int *)(header + wpos) = tree->fheadersize;
+    wpos += sizeof(int);
+
+    *(int *)(header + wpos) = tree->numofdim;
+    wpos += sizeof(int);
+
+    *(int *)(header + wpos) = nodesize;
+    wpos += sizeof(int);
+
+    *(long *)(header + wpos) = icount;
+    wpos += sizeof(long);
+
+    FILE * f = fopen(filename,"wb+");
+
+    fwrite(header,1,tree->fheadersize,f);
+
+    int pagenodecount = 50;
+    long pagesize = pagenodecount * nodesize;
+
+    char * page = malloc(pagesize);
+    int wpage = 0;
+
+    int noofpages = icount / pagenodecount + 1;
+
+    for (int i = 0; i < noofpages; i++)
+    {
+        wpage = 0;
+        memset(page, 0, pagesize);
+
+        for (int j = 0; j < pagenodecount; i++)
+        {
+            if (i * pagenodecount + j < icount)
+            {
+
+            }
+            else
+            {
+                pagesize = j * nodesize;
+                break;
+            }
+        }
+    }
+
+
+    free(nodes);
+    free(page);
+}
+
 
 int kd_is_point_contained(knum_t * point, knum_t * searchrange, int dim)
 {
@@ -321,7 +444,7 @@ int kd_par_range_node_count(knum_t * searchrange, int dim, queue * q, long * tco
                 knum_t xhigh = searchrange[sdim*2+1];
 
                 int goneleft = 0;
-                struct lsdnode * nnode = NULL;
+                struct kdnode * nnode = NULL;
 
                 if(xlow <= spos)
                 {
@@ -458,7 +581,7 @@ int kd_par_cts_range_node_count(knum_t * searchrect, int dim, queue * q, long * 
             free(node);
         }
 
-        struct lsdnode * nextnode;
+        struct kdnodeH * nextnode;
 
         #pragma omp critical
         nextnode = queue_pop(q);
