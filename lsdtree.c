@@ -448,6 +448,8 @@ int lsd_par_range_count(struct lsdtree *tree, num_t * searchrange)
     #pragma omp parallel num_threads(4)
     lsd_par_range_node_count(searchrange, tree->numofdim, q, &tcount, &ncount);
 
+    queue_free(q);
+
     return ncount;
 }
 int lsd_par_cts_range_node_count(num_t * searchrect, int dim, queue * q, long * tcount, long * ncount)
@@ -487,13 +489,19 @@ int lsd_par_cts_range_node_count(num_t * searchrect, int dim, queue * q, long * 
                 {
                     nnode = node->left;
                     if (spos <= xhigh)
+                    {
+                        #pragma omp critical
                         queue_push(q, node->right);
+                    }
                 }
                 else
                 {
                     nnode = node->right;
                     if (spos >= xlow)
+                    {
+                        #pragma omp critical
                         queue_push(q, node->left);
+                    }
 
                 }
 
@@ -503,13 +511,12 @@ int lsd_par_cts_range_node_count(num_t * searchrect, int dim, queue * q, long * 
             int ret = 0;
             for (int i = 0; i < node->bucketsize; i++)
             {
-                if (lsd_is_point_contained(node->bucket[i], searchrect,dim))
+                if (lsd_is_rect_intersecting(node->bucket[i], searchrect,dim))
                     ret++;
             }
 
             #pragma omp atomic
             *ncount += ret;
-
         }
 
         struct lsdnode * nextnode;
@@ -540,7 +547,9 @@ int lsd_par_cts_range_count(struct lsdtree *tree, num_t * searchrect)
     long ncount = 0;
 
     #pragma omp parallel num_threads(4)
-    lsd_par_cts_range_node_count(searchrect, tree->numofdim, q, &tcount, &ncount);
+    lsd_par_cts_range_node_count(searchrect, tree->numofdim / 2, q, &tcount, &ncount);
+
+    queue_free(q);
 
     return ncount;
 }

@@ -15,6 +15,7 @@ int search_cts_count(num_t ** rects, num_t * searchrange, int numofrects, int di
 int main()
 {
     lsdctsrangesearch();
+    //kdrangesearch();
 
     //int nooft = 20;
     //#pragma omp parallel
@@ -57,7 +58,7 @@ void queuetest()
 
 void lsdctsrangesearch()
 {
-    int numofvalues = 1000000;
+    int numofvalues = 100000;
     int numofdims = 2;
     int numofctsdims = 2 * numofdims;
     int upper = 5000;
@@ -79,7 +80,6 @@ void lsdctsrangesearch()
 
         values[i] = arrvalues + i * numofctsdims;
     }
-
 
     struct lsdtree * tree = lsd_create(values,numofctsdims, numofvalues);
 
@@ -103,14 +103,14 @@ void lsdctsrangesearch()
     int count2 = lsd_par_cts_range_count(tree,searchrect);
     diff = clock() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count1,msec);
+    printf("n = %d  t = %d\n", count2,msec);
 
 
     start = clock();
     int count3 = search_cts_count(values, searchrect, numofvalues, numofdims);
     diff = clock() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count1,msec);
+    printf("n = %d  t = %d\n", count3,msec);
 
     free(arrvalues);
     free(values);
@@ -118,7 +118,7 @@ void lsdctsrangesearch()
 
 void lsdrangesearch()
 {
-    int numofvalues = 4000000;
+    int numofvalues = 40000;
     int numofdims = 2;
     int upper = 10000;
     srand((unsigned int)time(NULL));
@@ -157,14 +157,14 @@ void lsdrangesearch()
     int count2 = lsd_par_range_count(tree,searchrange);
     diff = clock() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count1,msec);
+    printf("n = %d  t = %d\n", count2,msec);
 
 
     start = clock();
     int count3 = search_count(values, searchrange, numofvalues, numofdims);
     diff = clock() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count1,msec);
+    printf("n = %d  t = %d\n", count3,msec);
 
     lsd_free(tree);
     free(arrvalues);
