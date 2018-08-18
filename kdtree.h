@@ -6,7 +6,7 @@ struct kdtree;
 
 typedef double knum_t;
 
-struct kdtree * kd_create(int dim, knum_t ** values, int size);
+struct kdtree * kd_create( knum_t ** values, int dim, int size);
 
 struct kdtree * kd_open(const char * filename);
 
