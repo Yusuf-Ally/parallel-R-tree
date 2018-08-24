@@ -4,14 +4,15 @@
 #include <math.h>
 #include "kdtree.h"
 #include "queue.h"
-
-#define KDHEADERSIZE 128
+#include "queuea.h"
 
 struct kdnode
 {
     knum_t * point;
 
     struct kdnode * left, * right;
+
+    int dim;
 };
 
 struct kdtree
@@ -19,10 +20,6 @@ struct kdtree
     struct kdnode * root;
 
     int numofdim;
-
-    int fheadersize;
-
-    int fnodesize;
 
 };
 
@@ -52,10 +49,6 @@ struct kdtree * kd_create(knum_t ** values, int dim, int size)
     tree = malloc(sizeof *tree);
 
     tree->numofdim = dim;
-
-    tree->fheadersize = KDHEADERSIZE;
-
-    tree->fnodesize = 24 + tree->numofdim * sizeof (knum_t);
 
     tree->root = kd_create_subnodes(values,dim,size,0);
 }
@@ -177,119 +170,6 @@ void kd_free(struct kdtree * tree)
     kd_free_node(tree->root);
 }
 
-int kd_nodes_count(struct kdnode * node)
-{
-    if (node == NULL)
-        return 0;
-
-    return 1 + kd_nodes_count(node->left) + kd_nodes_count(node->right);
-}
-
-
-void kd_node_make_array(struct kdnode * node, struct kdnode ** nodes, long * nodecount)
-{
-    if (node == NULL)
-        return;
-
-    nodes[*nodecount] = node;
-
-    (*nodecount)++;
-
-    kd_node_make_array(node->left,nodes,nodecount);
-    kd_node_make_array(node->right,nodes,nodecount);
-}
-
-long kd_get_node_position(struct kdnode * node, struct kdnode ** nodes, long size)
-{
-    for (int i = 0; i < size; i++)
-    {
-        if (nodes[i] == node)
-            return i;
-    }
-    return -1;
-}
-
-void kd_write_node(char * buffer, struct kdnode * node, struct kdnode ** nodes, long size, long dim)
-{
-    int wpos = 0;
-
-    *(long *)(buffer + wpos) = kd_get_node_position(node->left,nodes,size);
-    wpos += sizeof(long);
-
-    *(long *)(buffer + wpos) = kd_get_node_position(node->right,nodes,size);
-    wpos += sizeof(long);
-
-    for (int i = 0; i < dim; i++)
-    {
-        *(knum_t *)(buffer + wpos) = node->point[i];
-        wpos += sizeof(knum_t);
-    }
-}
-
-void kd_save(struct kdtree * tree, const char * filename)
-{
-    int icount = kd_nodes_count(tree->root);
-
-    struct kdnode ** nodes;
-    nodes = malloc(sizeof (struct kdnode *) * icount);
-
-    int nodecount = 0;
-    kd_node_make_array(tree->root,nodes,&nodecount);
-
-    int nodesize = tree->fnodesize;
-
-    int wpos = 0;
-    char * header = malloc(tree->fheadersize);
-
-    *(int *)(header + wpos) = tree->fheadersize;
-    wpos += sizeof(int);
-
-    *(int *)(header + wpos) = tree->numofdim;
-    wpos += sizeof(int);
-
-    *(int *)(header + wpos) = nodesize;
-    wpos += sizeof(int);
-
-    *(long *)(header + wpos) = icount;
-    wpos += sizeof(long);
-
-    FILE * f = fopen(filename,"wb+");
-
-    fwrite(header,1,tree->fheadersize,f);
-
-    int pagenodecount = 50;
-    long pagesize = pagenodecount * nodesize;
-
-    char * page = malloc(pagesize);
-    int wpage = 0;
-
-    int noofpages = icount / pagenodecount + 1;
-
-    for (int i = 0; i < noofpages; i++)
-    {
-        wpage = 0;
-        memset(page, 0, pagesize);
-
-        for (int j = 0; j < pagenodecount; i++)
-        {
-            if (i * pagenodecount + j < icount)
-            {
-
-            }
-            else
-            {
-                pagesize = j * nodesize;
-                break;
-            }
-        }
-    }
-
-
-    free(nodes);
-    free(page);
-}
-
-
 int kd_is_point_contained(knum_t * point, knum_t * searchrange, int dim)
 {
     for (int i = 0; i < dim; i++)
@@ -399,22 +279,22 @@ int kd_cts_range_count(struct kdtree *tree, knum_t * searchrect)
 
 struct kdnodeH * kd_create_par_node(struct kdnode * node, int height)
 {
-    struct kdnodeH * ndh = malloc(sizeof(*ndh));
+    struct kdnodeH * ndh = malloc(sizeof *ndh);
     ndh->height = height;
     ndh->node = node;
 
     return ndh;
 }
 
-int kd_par_range_node_count(knum_t * searchrange, int dim, queue * q, long * tcount, long * ncount)
+int kd_par_range_node_count(knum_t * searchrange, int dim, queuea * q, long * tcount, long * ncount)
 {
     int my_rank = omp_get_thread_num();
     int thread_count = omp_get_num_threads();
 
-    struct kdnodeH * node;
+    struct kdnode * node;
 
     #pragma omp critical
-    node = queue_pop(q);
+    node = queuea_pop(q);
 
     if (node == NULL)
     {
@@ -428,9 +308,11 @@ int kd_par_range_node_count(knum_t * searchrange, int dim, queue * q, long * tco
         if (node != NULL)
         {
             int ret = 0;
-            int height = node->height;
+            int height = node->dim;
 
-            struct kdnode * knode = node->node;
+            struct kdnode * knode = node;
+
+            //queue * q2 = queue_create();
 
             while (knode != NULL)
             {
@@ -438,6 +320,7 @@ int kd_par_range_node_count(knum_t * searchrange, int dim, queue * q, long * tco
                     ret += 1;
 
                 int sdim = height % dim;
+
                 knum_t spos = knode->point[sdim];
 
                 knum_t xlow = searchrange[sdim*2];
@@ -456,8 +339,12 @@ int kd_par_range_node_count(knum_t * searchrange, int dim, queue * q, long * tco
                 {
                     if (goneleft)
                     {
-                        #pragma omp critical
-                        queue_push(q,kd_create_par_node(knode->right, height+1));
+                        if (knode->right != NULL)
+                        {
+                            knode->right->dim = height+1;
+                            #pragma omp critical
+                            queuea_push(q,knode->right);
+                        }
                     }
                     else
                         nnode = knode->right;
@@ -470,13 +357,16 @@ int kd_par_range_node_count(knum_t * searchrange, int dim, queue * q, long * tco
             #pragma omp atomic
             *ncount += ret;
 
-            free(node);
+            //#pragma omp critical
+            //queue_merge(q,q2);
+            //queue_free(q2);
+            //free(node);
         }
 
-        struct kdnodeH * nextnode;
+        struct kdnode * nextnode;
 
         #pragma omp critical
-        nextnode = queue_pop(q);
+        nextnode = queuea_pop(q);
 
         if (nextnode == NULL && node != NULL)
         {
@@ -495,15 +385,92 @@ int kd_par_range_node_count(knum_t * searchrange, int dim, queue * q, long * tco
 
 int kd_par_range_count(struct kdtree *tree, knum_t * searchrange)
 {
-    queue * q = queue_create();
-    queue_push(q, kd_create_par_node(tree->root,0));
+    queuea * q = queuea_create(1000000);
+    tree->root->dim = 0;
+    queuea_push(q, tree->root);
     long tcount = 0;
     long ncount = 0;
 
-    #pragma omp parallel
+    #pragma omp parallel num_threads(4)
     kd_par_range_node_count(searchrange, tree->numofdim, q, &tcount, &ncount);
 
-    queue_free(q);
+    queuea_free(q);
+
+    return ncount;
+}
+
+int kd_get_max_balanced_height(struct kdtree * tree)
+{
+    struct kdnode * node = tree->root;
+    int h = 0;
+
+    while (node != NULL)
+    {
+        node = node->left;
+        h++;
+    }
+    return h;
+}
+
+
+void kd_par_range_node_count2(struct kdnode *node, knum_t * searchrange, int dim, int height, int maxheight, long *ncount)
+{
+    //int my_rank = omp_get_thread_num();
+    //int thread_count = omp_get_num_threads();
+
+    if (node == NULL)
+        return;
+
+    if (kd_is_point_contained(node->point,searchrange, dim))
+    {
+        #pragma omp atomic
+        (*ncount)++;
+    }
+
+    int sdim = height % dim;
+    knum_t spos = node->point[sdim];
+
+    knum_t xlow = searchrange[sdim*2];
+    knum_t xhigh = searchrange[sdim*2+1];
+
+    int gone = 0;
+
+    if(xlow <= spos)
+    {
+        if (node->left != NULL)
+        {
+            kd_par_range_node_count2(node->left,searchrange, dim, height + 1, maxheight, ncount);
+            gone = 1;
+        }
+    }
+    if (xhigh >= spos)
+    {
+        if(node->right != NULL)
+        {
+            if (gone && height < maxheight)
+            {
+                #pragma omp task
+                kd_par_range_node_count2(node->right, searchrange, dim, height + 1, maxheight, ncount);
+            }
+            else
+                kd_par_range_node_count2(node->right, searchrange, dim, height + 1, maxheight, ncount);
+
+        }
+    }
+}
+
+
+int kd_par_range_count2(struct kdtree *tree, knum_t * searchrange)
+{
+    long ncount = 0;
+
+    int maxheight = kd_get_max_balanced_height(tree) - 7;
+
+    #pragma omp parallel num_threads(2) shared(ncount)
+    {
+        #pragma omp master
+        kd_par_range_node_count2(tree->root,searchrange,tree->numofdim,0,maxheight,&ncount);
+    }
 
     return ncount;
 }
@@ -612,6 +579,75 @@ int kd_par_cts_range_count(struct kdtree *tree, knum_t * searchrect)
     kd_par_cts_range_node_count(searchrect, tree->numofdim / 2, q, &tcount, &ncount);
 
     queue_free(q);
+
+    return ncount;
+}
+
+
+
+void kd_par_cts_range_node_count2(struct kdnode *node, knum_t * searchrect, int dim, int height, int maxheight, long * ncount)
+{
+    if (node == NULL)
+        return;
+
+    if (kd_is_rect_intersecting(node->point, searchrect,dim))
+    {
+        #pragma omp atomic
+        (*ncount)++;
+    }
+
+    int sdim = height % (dim*2);
+    knum_t spos = node->point[sdim];
+
+    int sndim = sdim / 2;
+
+    knum_t xlow = searchrect[sndim*2];
+    knum_t xhigh = searchrect[sndim*2+1];
+
+    if (sdim % 2 == 0)
+    {
+        kd_par_cts_range_node_count2(node->left,searchrect,dim, height+1, maxheight, ncount);
+
+        if (spos <= xhigh)
+        {
+            if (height < maxheight)
+            {
+                #pragma omp task
+                kd_par_cts_range_node_count2(node->right,searchrect,dim, height+1, maxheight, ncount);
+            }
+            else
+                kd_par_cts_range_node_count2(node->right,searchrect,dim, height+1, maxheight, ncount);
+        }
+    }
+    else
+    {
+        kd_par_cts_range_node_count2(node->right,searchrect,dim, height+1, maxheight, ncount);
+
+        if (spos >= xlow)
+        {
+            if (height < maxheight)
+            {
+                #pragma omp task
+                kd_par_cts_range_node_count2(node->left,searchrect,dim, height+1, maxheight, ncount);
+            }
+            else
+                kd_par_cts_range_node_count2(node->left,searchrect,dim, height+1, maxheight, ncount);
+        }
+
+    }
+}
+
+int kd_par_cts_range_count2(struct kdtree *tree, knum_t * searchrect)
+{
+    long ncount = 0;
+
+    int maxheight = kd_get_max_balanced_height(tree) - 7;
+
+    #pragma omp parallel num_threads(2) shared(ncount)
+    {
+        #pragma omp master
+        kd_par_cts_range_node_count2(tree->root,searchrect,tree->numofdim / 2, 0, maxheight, &ncount);
+    }
 
     return ncount;
 }

@@ -4,6 +4,7 @@
 #include <omp.h>
 #include "lsdtree.h"
 #include "kdtree.h"
+#include "queuea.h"
 #include "queue.h"
 
 
@@ -15,20 +16,9 @@ int search_cts_count(num_t ** rects, num_t * searchrange, int numofrects, int di
 
 int main()
 {
-    kdctsrangesearch();
+    lsdrangesearch();
 
-    //int nooft = 20;
-    //#pragma omp parallel
-    //mptest();
     return 0;
-}
-
-void mptest()
-{
-    int my_rank = omp_get_thread_num();
-    int thread_count = omp_get_num_threads();
-
-    printf("c = %d\n", my_rank);
 }
 
 void queuetest()
@@ -36,24 +26,24 @@ void queuetest()
 
     srand((unsigned int)time(NULL));
 
-    queue * q = queue_create();
+    queuea * q = queuea_create(1000);
 
     int data[10];
 
     for (int i = 0; i < 10; i++)
     {
         data[i] = rand() % 100;
-        queue_push(q,&data[i]);
+        queuea_push(q,&data[i]);
         printf ("d=%d\n", data[i]);
     }
 
     void * item;
-    while ((item = queue_pop(q)) != NULL)
+    while ((item = queuea_pop(q)) != NULL)
     {
-        printf("%d\n", *(int*)item);
+        printf("r=%d\n", *(int*)item);
     }
 
-    queue_free(q);
+    queuea_free(q);
 }
 
 
@@ -101,7 +91,7 @@ void kdctsrangesearch()
 
 
     start = clock();
-    int count2 = kd_par_cts_range_count(tree,searchrect);
+    int count2 = kd_par_cts_range_count2(tree,searchrect);
     diff = clock() - start;
     msec = diff;
     printf("n = %d  t = %d\n", count2,msec);
@@ -142,9 +132,9 @@ void kdrangesearch()
 
     knum_t searchrange[numofdims * 2];
 
-    searchrange[0] = 5000;
+    searchrange[0] = 3000;
     searchrange[1] = 8000;
-    searchrange[2] = 5000;
+    searchrange[2] = 3000;
     searchrange[3] = 8000;
 
     clock_t start = clock();
@@ -155,7 +145,7 @@ void kdrangesearch()
 
 
     start = clock();
-    int count2 = kd_par_range_count(tree,searchrange);
+    int count2 = kd_par_range_count2(tree,searchrange);
     diff = clock() - start;
     msec = diff;
     printf("n = %d  t = %d\n", count2,msec);
@@ -174,7 +164,7 @@ void kdrangesearch()
 
 void lsdctsrangesearch()
 {
-    int numofvalues = 100000;
+    int numofvalues = 400000;
     int numofdims = 2;
     int numofctsdims = 2 * numofdims;
     int upper = 5000;
@@ -234,7 +224,7 @@ void lsdctsrangesearch()
 
 void lsdrangesearch()
 {
-    int numofvalues = 40000;
+    int numofvalues = 1000000;
     int numofdims = 2;
     int upper = 10000;
     srand((unsigned int)time(NULL));
@@ -257,9 +247,9 @@ void lsdrangesearch()
 
     num_t searchrange[numofdims * 2];
 
-    searchrange[0] = 5000;
+    searchrange[0] = 3000;
     searchrange[1] = 8000;
-    searchrange[2] = 5000;
+    searchrange[2] = 3000;
     searchrange[3] = 8000;
 
     clock_t start = clock();
@@ -270,7 +260,7 @@ void lsdrangesearch()
 
 
     start = clock();
-    int count2 = lsd_par_range_count(tree,searchrange);
+    int count2 = lsd_par_range_count2(tree,searchrange);
     diff = clock() - start;
     msec = diff;
     printf("n = %d  t = %d\n", count2,msec);
