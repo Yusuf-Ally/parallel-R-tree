@@ -1,11 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/time.h>
+#include <time.h>
 #include <omp.h>
 #include "lsdtree.h"
 #include "kdtree.h"
 #include "queuea.h"
 #include "queue.h"
+#include "test.h"
 
 
 int is_point_contained(num_t * point, num_t * searchrange, int dim);
@@ -14,9 +15,16 @@ int search_count(num_t ** points, num_t * searchrange,int numofpoints, int dim);
 int is_rect_intersecting(num_t * rect, num_t * searchrange, int dim);
 int search_cts_count(num_t ** rects, num_t * searchrange, int numofrects, int dim);
 
+void queuetest();
+void kdctsrangesearch();
+void kdrangesearch();
+void lsdctsrangesearch();
+void lsdrangesearch();
+
+
 int main()
 {
-    lsdrangesearch();
+    search_rect_size_test();
 
     return 0;
 }
@@ -83,25 +91,25 @@ void kdctsrangesearch()
     searchrect[2] = 3000;
     searchrect[3] = 4000;
 
-    clock_t start = clock();
+    double start = omp_get_wtime();
     int count1 = kd_cts_range_count(tree, searchrect);
-    clock_t diff = clock() - start;
-    int msec = diff;
-    printf("n = %d  t = %d\n", count1, msec);
+    double diff = omp_get_wtime() - start;
+    double msec = diff;
+    printf("n = %d  t = %f\n", count1, msec);
 
 
-    start = clock();
+    start = omp_get_wtime();
     int count2 = kd_par_cts_range_count2(tree,searchrect);
-    diff = clock() - start;
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count2,msec);
+    printf("n = %d  t = %f\n", count2,msec);
 
 
-    start = clock();
+    start = omp_get_wtime();
     int count3 = search_cts_count(values, searchrect, numofvalues, numofdims);
-    diff = clock() - start;
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count3,msec);
+    printf("n = %d  t = %f\n", count3,msec);
 
     free(arrvalues);
     free(values);
@@ -137,25 +145,25 @@ void kdrangesearch()
     searchrange[2] = 3000;
     searchrange[3] = 8000;
 
-    clock_t start = clock();
+    double start = omp_get_wtime();
     int count1 = kd_range_count(tree, searchrange);
-    clock_t diff = clock() - start;
-    int msec = diff;
-    printf("n = %d  t = %d\n", count1, msec);
+    double diff = omp_get_wtime() - start;
+    double msec = diff;
+    printf("n = %d  t = %f\n", count1, msec);
 
 
-    start = clock();
+    start = omp_get_wtime();
     int count2 = kd_par_range_count2(tree,searchrange);
-    diff = clock() - start;
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count2,msec);
+    printf("n = %d  t = %f\n", count2,msec);
 
 
-    start = clock();
+    start = omp_get_wtime();
     int count3 = search_count(values, searchrange, numofvalues, numofdims);
-    diff = clock() - start;
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count3,msec);
+    printf("n = %d  t = %f\n", count3,msec);
 
     kd_free(tree);
     free(arrvalues);
@@ -198,25 +206,25 @@ void lsdctsrangesearch()
     searchrect[2] = 3000;
     searchrect[3] = 4000;
 
-    clock_t start = clock();
+    double start = omp_get_wtime();
     int count1 = lsd_cts_range_count(tree, searchrect);
-    clock_t diff = clock() - start;
-    int msec = diff;
-    printf("n = %d  t = %d\n", count1, msec);
+    double diff = omp_get_wtime() - start;
+    double msec = diff;
+    printf("n = %d  t = %f\n", count1, msec);
 
 
-    start = clock();
-    int count2 = lsd_par_cts_range_count(tree,searchrect);
-    diff = clock() - start;
+    start = omp_get_wtime();
+    int count2 = lsd_par_cts_range_count2(tree,searchrect);
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count2,msec);
+    printf("n = %d  t = %f\n", count2,msec);
 
 
-    start = clock();
+    start = omp_get_wtime();
     int count3 = search_cts_count(values, searchrect, numofvalues, numofdims);
-    diff = clock() - start;
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count3,msec);
+    printf("n = %d  t = %f\n", count3,msec);
 
     free(arrvalues);
     free(values);
@@ -252,25 +260,25 @@ void lsdrangesearch()
     searchrange[2] = 3000;
     searchrange[3] = 8000;
 
-    clock_t start = clock();
+    double start = omp_get_wtime();
     int count1 = lsd_range_count(tree, searchrange);
-    clock_t diff = clock() - start;
-    int msec = diff;
-    printf("n = %d  t = %d\n", count1, msec);
+    double diff = omp_get_wtime() - start;
+    double msec = diff;
+    printf("n = %d  t = %f\n", count1, msec);
 
 
-    start = clock();
+    start = omp_get_wtime();
     int count2 = lsd_par_range_count2(tree,searchrange);
-    diff = clock() - start;
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count2,msec);
+    printf("n = %d  t = %f\n", count2,msec);
 
 
-    start = clock();
+    start = omp_get_wtime();
     int count3 = search_count(values, searchrange, numofvalues, numofdims);
-    diff = clock() - start;
+    diff = omp_get_wtime() - start;
     msec = diff;
-    printf("n = %d  t = %d\n", count3,msec);
+    printf("n = %d  t = %f\n", count3,msec);
 
     lsd_free(tree);
     free(arrvalues);
