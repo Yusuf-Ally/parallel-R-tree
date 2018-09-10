@@ -2,9 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <omp.h>
 #include "kdtree.h"
 #include "queue.h"
 #include "queuea.h"
+
+#define KD_NUMOFTHREADS 2
 
 struct kdnode
 {
@@ -51,14 +54,16 @@ struct kdtree * kd_create(knum_t ** values, int dim, int size)
     tree->numofdim = dim;
 
     tree->root = kd_create_subnodes(values,dim,size,0);
+
+    return tree;
 }
 
 struct kdnode * kd_create_subnodes(knum_t **values, int dim,  int size, int height)
 {
-    if(size <= 0)
+    if (size <= 0)
         return NULL;
 
-	int splitdim = height % dim;
+    int splitdim = height % dim;
 
 	// Sort the data across the specific dimension
 	kd_sort(values,splitdim,size);
@@ -286,9 +291,9 @@ struct kdnodeH * kd_create_par_node(struct kdnode * node, int height)
     return ndh;
 }
 
-int kd_par_range_node_count(knum_t * searchrange, int dim, queuea * q, long * tcount, long * ncount)
+void kd_par_range_node_count(knum_t * searchrange, int dim, queuea * q, long * tcount, long * ncount)
 {
-    int my_rank = omp_get_thread_num();
+    //int my_rank = omp_get_thread_num();
     int thread_count = omp_get_num_threads();
 
     struct kdnode * node;
@@ -391,7 +396,7 @@ int kd_par_range_count(struct kdtree *tree, knum_t * searchrange)
     long tcount = 0;
     long ncount = 0;
 
-    #pragma omp parallel num_threads(4)
+    #pragma omp parallel num_threads(KD_NUMOFTHREADS)
     kd_par_range_node_count(searchrange, tree->numofdim, q, &tcount, &ncount);
 
     queuea_free(q);
@@ -464,9 +469,9 @@ int kd_par_range_count2(struct kdtree *tree, knum_t * searchrange)
 {
     long ncount = 0;
 
-    int maxheight = kd_get_max_balanced_height(tree) - 7;
+    int maxheight = kd_get_max_balanced_height(tree) - 5;
 
-    #pragma omp parallel num_threads(2) shared(ncount)
+    #pragma omp parallel num_threads(KD_NUMOFTHREADS) shared(ncount)
     {
         #pragma omp master
         kd_par_range_node_count2(tree->root,searchrange,tree->numofdim,0,maxheight,&ncount);
@@ -476,9 +481,9 @@ int kd_par_range_count2(struct kdtree *tree, knum_t * searchrange)
 }
 
 
-int kd_par_cts_range_node_count(knum_t * searchrect, int dim, queue * q, long * tcount, long * ncount)
+void kd_par_cts_range_node_count(knum_t * searchrect, int dim, queue * q, long * tcount, long * ncount)
 {
-    int my_rank = omp_get_thread_num();
+    //int my_rank = omp_get_thread_num();
     int thread_count = omp_get_num_threads();
 
     struct kdnodeH * node;
@@ -575,7 +580,7 @@ int kd_par_cts_range_count(struct kdtree *tree, knum_t * searchrect)
     long tcount = 0;
     long ncount = 0;
 
-    #pragma omp parallel
+    #pragma omp parallel num_threads(KD_NUMOFTHREADS)
     kd_par_cts_range_node_count(searchrect, tree->numofdim / 2, q, &tcount, &ncount);
 
     queue_free(q);
@@ -612,7 +617,7 @@ void kd_par_cts_range_node_count2(struct kdnode *node, knum_t * searchrect, int 
         {
             if (height < maxheight)
             {
-                #pragma omp task
+                #pragma omp task untied
                 kd_par_cts_range_node_count2(node->right,searchrect,dim, height+1, maxheight, ncount);
             }
             else
@@ -627,7 +632,7 @@ void kd_par_cts_range_node_count2(struct kdnode *node, knum_t * searchrect, int 
         {
             if (height < maxheight)
             {
-                #pragma omp task
+                #pragma omp task untied
                 kd_par_cts_range_node_count2(node->left,searchrect,dim, height+1, maxheight, ncount);
             }
             else
@@ -643,7 +648,7 @@ int kd_par_cts_range_count2(struct kdtree *tree, knum_t * searchrect)
 
     int maxheight = kd_get_max_balanced_height(tree) - 7;
 
-    #pragma omp parallel num_threads(2) shared(ncount)
+    #pragma omp parallel num_threads(KD_NUMOFTHREADS) shared(ncount)
     {
         #pragma omp master
         kd_par_cts_range_node_count2(tree->root,searchrect,tree->numofdim / 2, 0, maxheight, &ncount);

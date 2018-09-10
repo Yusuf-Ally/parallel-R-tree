@@ -7,8 +7,7 @@
 #include "queue.h"
 
 #define LSD_BUCKET_SIZE 100
-
-#define LSD_NODE_BUFFER_DEPTH 10
+#define LSD_NUMOFTHREADS 2
 
 struct lsdnode
 {
@@ -36,7 +35,7 @@ struct lsdtree
 void lsd_create_subnodes(struct lsdnode * node, num_t **values, int dim,  int size, int bucketsize);
 void lsd_sort(num_t **values, int dim, int size);
 void lsd_free_node(struct lsdnode *node);
-
+int lsd_get_best_dim(double **values, int size, int prevdim, int numofdim);
 
 struct lsdtree * lsd_create(num_t **values,   int dim, int size)
 {
@@ -123,10 +122,10 @@ void lsd_create_subnodes(struct lsdnode * node, num_t **values, int dim,  int si
 	node->left = malloc(sizeof *(node->left));
 	node->right = malloc(sizeof *(node->right));
 
-	int newdim = (splitdim == dim-1)? 0 : splitdim+1;
+	//int newdim = (splitdim == dim-1)? 0 : splitdim+1;
 
-	node->left->splitdim = newdim;
-	node->right->splitdim = newdim;
+	node->left->splitdim = lsd_get_best_dim(values,splitvpos + 1, splitdim, dim);
+	node->right->splitdim = lsd_get_best_dim(values + splitvpos + 1,size - splitvpos - 1, splitdim, dim);
 
 	lsd_create_subnodes(node->left, values, dim, splitvpos + 1, bucketsize);
 	lsd_create_subnodes(node->right, values + splitvpos + 1, dim, size - splitvpos - 1, bucketsize);
@@ -238,6 +237,12 @@ void lsd_free(struct lsdtree *tree)
     lsd_free_node(tree->root);
 
     free(tree);
+}
+
+
+int lsd_get_best_dim(double **values, int size, int prevdim, int numofdim)
+{
+    return (prevdim == numofdim-1)? 0 : prevdim+1;
 }
 
 int lsd_is_point_contained(num_t * point, num_t * searchrange, int dim)
@@ -354,9 +359,9 @@ int lsd_cts_range_count(struct lsdtree *tree, num_t * searchrect)
 }
 
 
-int lsd_par_range_node_count(num_t * searchrange, int dim, queue * q, long * tcount, long * ncount)
+void lsd_par_range_node_count(num_t * searchrange, int dim, queue * q, long * tcount, long * ncount)
 {
-    int my_rank = omp_get_thread_num();
+    //int my_rank = omp_get_thread_num();
     int thread_count = omp_get_num_threads();
 
     struct lsdnode * node;
@@ -445,7 +450,7 @@ int lsd_par_range_count(struct lsdtree *tree, num_t * searchrange)
     long tcount = 0;
     long ncount = 0;
 
-    #pragma omp parallel num_threads(4)
+    #pragma omp parallel num_threads(LSD_NUMOFTHREADS)
     lsd_par_range_node_count(searchrange, tree->numofdim, q, &tcount, &ncount);
 
     queue_free(q);
@@ -497,7 +502,7 @@ int lsd_par_range_count2(struct lsdtree *tree, num_t * searchrange)
 {
     long ncount = 0;
 
-    #pragma omp parallel num_threads(4)
+    #pragma omp parallel num_threads(LSD_NUMOFTHREADS)
     {
         #pragma omp single
         lsd_par_range_node_count2(tree->root, searchrange, tree->numofdim, &ncount);
@@ -505,9 +510,9 @@ int lsd_par_range_count2(struct lsdtree *tree, num_t * searchrange)
     return ncount;
 }
 
-int lsd_par_cts_range_node_count(num_t * searchrect, int dim, queue * q, long * tcount, long * ncount)
+void lsd_par_cts_range_node_count(num_t * searchrect, int dim, queue * q, long * tcount, long * ncount)
 {
-    int my_rank = omp_get_thread_num();
+    //int my_rank = omp_get_thread_num();
     int thread_count = omp_get_num_threads();
 
     struct lsdnode * node;
@@ -599,10 +604,69 @@ int lsd_par_cts_range_count(struct lsdtree *tree, num_t * searchrect)
     long tcount = 0;
     long ncount = 0;
 
-    #pragma omp parallel
+    #pragma omp parallel num_threads(LSD_NUMOFTHREADS)
     lsd_par_cts_range_node_count(searchrect, tree->numofdim / 2, q, &tcount, &ncount);
 
     queue_free(q);
+
+    return ncount;
+}
+
+void lsd_par_cts_range_node_count2(struct lsdnode *node, num_t * searchrect, int dim, long * ncount)
+{
+
+    if (node->left == NULL)
+    {
+        int ret = 0;
+
+        for (int i = 0; i < node->bucketsize; i++)
+        {
+            if (lsd_is_rect_intersecting(node->bucket[i], searchrect,dim))
+                ret++;
+        }
+        #pragma omp atomic
+        (*ncount) += ret;
+        return;
+    }
+
+    int sdim = node->splitdim;
+    num_t spos = node->splitpos;
+
+    int sndim = sdim / 2;
+
+    num_t xlow = searchrect[sndim*2];
+    num_t xhigh = searchrect[sndim*2+1];
+
+    if (sdim % 2 == 0)
+    {
+        lsd_par_cts_range_node_count2(node->left,searchrect,dim, ncount);
+        if (spos <= xhigh)
+        {
+            #pragma omp task
+            lsd_par_cts_range_node_count2(node->right,searchrect,dim, ncount);
+        }
+    }
+    else
+    {
+        lsd_par_cts_range_node_count2(node->right,searchrect,dim, ncount);
+        if (spos >= xlow)
+        {
+            #pragma omp task
+            lsd_par_cts_range_node_count2(node->left,searchrect,dim, ncount);
+        }
+
+    }
+}
+
+int lsd_par_cts_range_count2(struct lsdtree *tree, num_t * searchrect)
+{
+    long ncount = 0;
+
+    #pragma omp parallel num_threads(LSD_NUMOFTHREADS)
+    {
+        #pragma omp master
+        lsd_par_cts_range_node_count2(tree->root,searchrect,tree->numofdim / 2, &ncount);
+    }
 
     return ncount;
 }

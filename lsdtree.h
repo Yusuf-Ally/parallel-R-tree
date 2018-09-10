@@ -20,8 +20,10 @@ void lsd_free (struct lsdtree *tree);
 int lsd_range_count(struct lsdtree *tree, num_t * searchrange);
 int lsd_cts_range_count(struct lsdtree *tree, num_t * searchrect);
 
-int lsd_par_cts_range_count(struct lsdtree *tree, num_t * searchrect);
 int lsd_par_range_count(struct lsdtree *tree, num_t * searchrange);
+int lsd_par_cts_range_count(struct lsdtree *tree, num_t * searchrect);
 
+int lsd_par_range_count2(struct lsdtree *tree, num_t * searchrange);
+int lsd_par_cts_range_count2(struct lsdtree *tree, num_t * searchrect);
 
 #endif	/* _LDSTREE_H_ */

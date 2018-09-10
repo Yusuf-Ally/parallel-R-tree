@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <time.h>
 #include <omp.h>
 #include "lsdtree.h"
@@ -24,7 +25,10 @@ void lsdrangesearch();
 
 int main()
 {
-    search_rect_size_test();
+    num_of_records_test();
+    //search_rect_size_test();
+    //clustered_data_test();
+    //clustered_num_of_records_test();
 
     return 0;
 }

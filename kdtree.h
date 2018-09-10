@@ -16,7 +16,7 @@ void kd_insert(struct kdtree * tree, knum_t * value);
 
 
 int kd_cts_range_count(struct kdtree *tree, knum_t * searchrect);
-int kd_range_count(struct kdtree *tree, knum_t * searchrange)
+int kd_range_count(struct kdtree *tree, knum_t * searchrange);
 
 // Slow functions
 int kd_par_range_count(struct kdtree *tree, knum_t * searchrange);
